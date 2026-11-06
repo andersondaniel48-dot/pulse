@@ -167,10 +167,11 @@ function thump(t,gain){
 }
 function heartbeat(intensity){
   if(!ac||!S.sound)return;const t=ac.currentTime+.01;
+  if(S.mode==='sonar'){SN.blankUntil=performance.now()+450;intensity*=.5}
   thump(t,.35+.55*intensity);thump(t+.17,.22+.4*intensity);
 }
 function ping(closeness){
-  if(!ac||!S.sound)return;const t=ac.currentTime+.005,o=ac.createOscillator(),g=ac.createGain();
+  if(!ac||!S.sound||S.mode==='sonar')return;const t=ac.currentTime+.005,o=ac.createOscillator(),g=ac.createGain();
   o.type='sine';o.frequency.value=900+900*closeness;
   g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.07,t+.005);g.gain.exponentialRampToValueAtTime(.0001,t+.09);
   o.connect(g).connect(master);o.start(t);o.stop(t+.1);
@@ -208,7 +209,7 @@ function onPulseStart(cs){
   const n=nearest(cs),close=n==null?0:1-Math.min(n/S.range,1);
   heartbeat(cs.length?close:0);
   lastPulse=performance.now();pulseAmp=cs.length?.4+.6*close:.12;
-  if(cs.length)buzz(n<1.5?[40,90,30]:[18]);
+  if(cs.length&&S.mode!=='sonar')buzz(n<1.5?[40,90,30]:[18]);
   // static specks for texture
   specks=[];for(let i=0;i<10;i++){const p=randPoint();specks.push({x:p.x,y:p.y,a:.08+Math.random()*.15})}
 }
@@ -264,7 +265,7 @@ function frame(t){
   // HUD
   $('count').textContent=cs.length;
   $('near').textContent=n==null?'--.-M':n.toFixed(1)+'M';
-  $('rate').textContent=S.mode==='live'?(pktRate+' PKT/S'):S.mode==='sonar'?('SNR '+(SN.snr||0).toFixed(1)):(Math.round(60/S.period)+' BPM');
+  $('rate').textContent=S.mode==='live'?(pktRate+' PKT/S'):S.mode==='sonar'?('SCORE '+(SN.snr||0).toFixed(1)):(Math.round(60/S.period)+' BPM');
   $('warn').style.opacity=(n!=null&&n<S.range*.2)?(Math.sin(t/90)>0?1:.25):0;
   requestAnimationFrame(frame);
 }
@@ -295,7 +296,7 @@ function drawEcg(t,dt){
 // Loops an inaudible 18–21.5 kHz chirp out of the speaker, cross-correlates the mic signal
 // with it, locks onto the direct speaker→mic path, subtracts the static room, and reports
 // the distance of whatever is moving. Range only (no direction). Doesn't pass through walls.
-const SN={N:2048,f0:18000,f1:21500,on:false,sens:1,thrs:[6,4,2.7],prof:new Float32Array(600),bg:null,L0:-1,frames:0,hit:null,snr:0,noise:0,scale:1e-3,prevRange:6};
+const SN={N:2048,f0:18000,f1:21500,on:false,sens:1,thrs:[7,5,3.5],need:[5,4,3],hist:[],blankUntil:0,prof:new Float32Array(600),bg:null,L0:-1,frames:0,hit:null,snr:0,noise:0,scale:1e-3,prevRange:6};
 SN.thr=()=>SN.thrs[SN.sens];
 function fft(re,im,inv){
   const n=re.length;
@@ -331,7 +332,7 @@ async function sonarStart(){
   const mic=ac.createMediaStreamSource(stream),sp=ac.createScriptProcessor(SN.N,1,1),z=ac.createGain();z.gain.value=0;
   mic.connect(sp);sp.connect(z).connect(ac.destination);
   sp.onaudioprocess=e=>sonarFrame(e.inputBuffer.getChannelData(0),fs);
-  Object.assign(SN,{on:true,src,g,mic,sp,z,stream,bg:null,L0:-1,frames:0,hit:null,snr:0,prof:new Float32Array(600)});
+  Object.assign(SN,{on:true,src,g,mic,sp,z,stream,bg:null,nf:null,score:new Float32Array(600),hist:[],L0:-1,frames:0,hit:null,snr:0,prof:new Float32Array(600)});
   return true;
 }
 function sonarStop(){
@@ -342,47 +343,68 @@ function sonarStop(){
   SN.on=false;SN.hit=null;
 }
 function sonarFrame(x,fs){
+  // skip frames while the app's own heartbeat/vibration is playing (it would echo as "motion")
+  if(performance.now()<SN.blankUntil)return;
   const N=SN.N,re=new Float64Array(N),im=new Float64Array(N);
   for(let i=0;i<N;i++)re[i]=x[i];
   fft(re,im,false);
   for(let i=0;i<N;i++){const a=re[i],b=im[i],c=SN.refRe[i],d=-SN.refIm[i];re[i]=a*c-b*d;im[i]=a*d+b*c}
   for(let i=1;i<N/2;i++){re[i]*=2;im[i]*=2}for(let i=N/2+1;i<N;i++){re[i]=0;im[i]=0} // analytic -> complex correlation
   fft(re,im,true);
-  // direct speaker->mic path = strongest peak; everything else is measured relative to it
+  // direct speaker->mic path = strongest peak; everything is measured relative to it
   let L=0,m=0;for(let k=0;k<N;k++){const v=re[k]*re[k]+im[k]*im[k];if(v>m){m=v;L=k}}
   const drift=Math.abs(((L-SN.L0+N+N/2)%N)-N/2);
-  if(SN.L0<0||drift>3){SN.L0=L;SN.bg=null;SN.frames=0}
+  if(SN.L0<0||drift>3){SN.L0=L;SN.bg=null;SN.nf=null;SN.frames=0;SN.hist=[]}
   const K=SN.prof.length,amp=Math.sqrt(m)||1;
   if(!SN.bg)SN.bg={r:new Float64Array(K),i:new Float64Array(K)};
-  const a=SN.frames<20?.3:.05; // fast calibration, then slow static-room tracking
+  const a=SN.frames<20?.3:.04;
   for(let k=0;k<K;k++){
     const j=(SN.L0+k)%N,cr=re[j]/amp,ci=im[j]/amp,dr=cr-SN.bg.r[k],di=ci-SN.bg.i[k];
     SN.bg.r[k]+=a*dr;SN.bg.i[k]+=a*di;SN.prof[k]=SN.prof[k]*.6+Math.hypot(dr,di)*.4;
   }
   SN.frames++;
-  const mpb=343/(2*fs),kmin=Math.round(.15/mpb),kmax=Math.min(K-1,Math.round(1.9/mpb));
-  let best=0,bk=-1;const arr=[];
-  for(let k=kmin;k<=kmax;k++){const v=SN.prof[k];arr.push(v);if(v>best){best=v;bk=k}}
-  arr.sort((p,q)=>p-q);const med=arr[arr.length>>1]||1e-9;
-  SN.noise=med;SN.snr=best/med;
-  if(SN.frames>25&&SN.snr>SN.thr()&&best>.0015){
-    const d=bk*mpb;SN.hit={d:SN.hit&&performance.now()-SN.hit.t<500?SN.hit.d*.6+d*.4:d,t:performance.now()};
+  // per-distance noise floor: learned while still, then adapts slowly only where nothing is detected
+  if(SN.frames===20)SN.nf=Float64Array.from(SN.prof);
+  if(!SN.nf)return;
+  const thr=SN.thr(),eps=2e-4;
+  for(let k=0;k<K;k++){
+    const sc=SN.prof[k]/(SN.nf[k]+eps);SN.score[k]=sc;
+    if(SN.frames<50)SN.nf[k]+=(Math.max(SN.prof[k],SN.nf[k])-SN.nf[k])*.25; // calibration: track the worst-case jitter
+    else if(sc<thr)SN.nf[k]+=(SN.prof[k]-SN.nf[k])*.01;
+  }
+  if(SN.frames<50)return;
+  const mpb=343/(2*fs),kmin=Math.round(.18/mpb),kmax=Math.min(K-1,Math.round(1.9/mpb));
+  let best=0,bk=-1;
+  for(let k=kmin;k<=kmax;k++)if(SN.score[k]>best){best=SN.score[k];bk=k}
+  SN.snr=best;
+  let d=null;
+  if(best>thr){ // centroid around the peak for a steadier distance
+    let w=0,ws=0;for(let k=Math.max(kmin,bk-6);k<=Math.min(kmax,bk+6);k++){const v=Math.max(0,SN.score[k]-thr*.5);w+=v;ws+=v*k}
+    d=(w?ws/w:bk)*mpb;
+  }
+  SN.hist.push(d);if(SN.hist.length>6)SN.hist.shift();
+  const got=SN.hist.filter(v=>v!=null);
+  if(got.length>=SN.need[SN.sens]){ // must persist across several frames -> no one-frame flickers
+    const srt=got.slice().sort((p,q)=>p-q),med=srt[srt.length>>1];
+    SN.hit={d:SN.hit&&performance.now()-SN.hit.t<600?SN.hit.d*.7+med*.3:med,t:performance.now()};
   }
 }
 function drawSonarStrip(){
   ectx.clearRect(0,0,EW,EH);
   const fs=ac?ac.sampleRate:48000,mpb=343/(2*fs),kmax=Math.min(SN.prof.length-1,Math.round(S.range/mpb));
-  const thr=SN.noise*SN.thr();let mx=thr*1.4;for(let k=0;k<=kmax;k++)if(SN.prof[k]>mx)mx=SN.prof[k];
-  SN.scale=Math.max(mx,SN.scale*.97,1e-6);
-  const base=EH-16,hgt=EH-34,X=k=>k/kmax*EW,Y=v=>base-Math.min(1,v/SN.scale)*hgt;
+  const thr=SN.thr(),top=thr*2.5,base=EH-16,hgt=EH-34,X=k=>k/kmax*EW,Y=v=>base-Math.min(1,v/top)*hgt;
   ectx.font='9px ui-monospace,Menlo,monospace';ectx.fillStyle='rgba(134,255,148,.45)';ectx.strokeStyle='rgba(134,255,148,.1)';
   for(let m=.5;m<S.range;m+=.5){const x=X(m/mpb);ectx.beginPath();ectx.moveTo(x,0);ectx.lineTo(x,base);ectx.stroke();ectx.fillText(m+'M',x+2,EH-4)}
-  if(SN.frames>25){ectx.setLineDash([4,4]);ectx.strokeStyle='rgba(255,184,77,.6)';ectx.beginPath();ectx.moveTo(0,Y(thr));ectx.lineTo(EW,Y(thr));ectx.stroke();ectx.setLineDash([])}
-  ectx.save();ectx.strokeStyle='#86ff94';ectx.lineWidth=1.5;ectx.shadowColor='#86ff94';ectx.shadowBlur=6;ectx.beginPath();
-  for(let k=0;k<=kmax;k++){const x=X(k),y=Y(SN.prof[k]);k?ectx.lineTo(x,y):ectx.moveTo(x,y)}
-  ectx.stroke();ectx.restore();
-  ectx.fillStyle='rgba(134,255,148,.6)';
-  ectx.fillText(!SN.on?'SONAR OFF':SN.frames<=25?'CALIBRATING — HOLD STILL':'ECHO / DISTANCE',EW-150,12);
+  const ready=SN.on&&SN.frames>=50;
+  if(ready){
+    ectx.setLineDash([4,4]);ectx.strokeStyle='rgba(255,184,77,.65)';ectx.beginPath();ectx.moveTo(0,Y(thr));ectx.lineTo(EW,Y(thr));ectx.stroke();ectx.setLineDash([]);
+    ectx.save();ectx.strokeStyle='#86ff94';ectx.lineWidth=1.5;ectx.shadowColor='#86ff94';ectx.shadowBlur=6;ectx.beginPath();
+    for(let k=0;k<=kmax;k++){const x=X(k),y=Y(SN.score[k]);k?ectx.lineTo(x,y):ectx.moveTo(x,y)}
+    ectx.stroke();ectx.restore();
+    if(SN.hit&&performance.now()-SN.hit.t<700){const x=X(SN.hit.d/mpb);ectx.fillStyle='#d8ffdd';ectx.beginPath();ectx.arc(x,Y(thr),4,0,7);ectx.fill()}
+  }
+  ectx.fillStyle='rgba(134,255,148,.6)';ectx.textAlign='right';
+  ectx.fillText(!SN.on?'SONAR OFF':!ready?'CALIBRATING — HOLD STILL':'MOTION SCORE vs DISTANCE',EW-10,12);ectx.textAlign='left';
 }
 
 // ---------- bluetooth (PULSE-PUCK) ----------
