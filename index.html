@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<title>PULSE — Heartbeat Sensor</title>
+<style>
+:root{--g:#86ff94;--g2:#3fae4c;--gd:#1d4a24;--amber:#ffb84d}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:#000;color:var(--g);font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;overflow:hidden;user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  padding:calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px)}
+#device{width:100%;max-width:520px;height:100%;max-height:900px;display:flex;flex-direction:column;gap:10px;
+  padding:14px 14px 16px;border-radius:26px;
+  background:linear-gradient(160deg,#3a3f37 0%,#23261f 40%,#151713 100%);
+  box-shadow:inset 0 2px 0 rgba(255,255,255,.12),inset 0 -3px 0 rgba(0,0,0,.6),0 18px 40px rgba(0,0,0,.8)}
+.plate{display:flex;justify-content:space-between;align-items:center;font-size:10px;letter-spacing:.28em;color:#9aa38f;
+  text-shadow:0 1px 0 #000;padding:0 6px}
+.plate b{color:#c9d1bd;font-weight:700}
+.led{width:9px;height:9px;border-radius:50%;background:#1b3a1f;box-shadow:inset 0 1px 2px #000;transition:background .08s,box-shadow .08s}
+.led.on{background:var(--g);box-shadow:0 0 10px var(--g),0 0 2px #fff}
+.led.red.on{background:#ff4d4d;box-shadow:0 0 10px #ff4d4d}
+.leds{display:flex;gap:8px;align-items:center}
+#screen{position:relative;flex:0 0 auto;width:100%;aspect-ratio:1/.95;max-height:calc(100% - 150px);border-radius:14px;overflow:hidden;
+  background:radial-gradient(ellipse 120% 90% at 50% 100%,#0e2a12 0%,#06140a 45%,#020603 80%);
+  box-shadow:0 0 0 3px #0a0c09,0 0 0 5px #2c3029,inset 0 0 50px rgba(0,0,0,.9)}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#scan{position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.28) 0 1px,transparent 1px 3px);mix-blend-mode:multiply}
+#vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,0,0,.65) 100%)}
+#hud{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;padding:10px 12px;font-size:11px;letter-spacing:.14em;
+  text-shadow:0 0 6px rgba(134,255,148,.7);pointer-events:none}
+#hud .big{font-size:22px;letter-spacing:.05em;line-height:1.1}
+#hud .r{text-align:right}
+#mode{display:inline-block;padding:2px 6px;border:1px solid var(--g2);border-radius:3px}
+#mode.live{color:#000;background:var(--g);box-shadow:0 0 10px var(--g)}
+#warn{position:absolute;left:0;right:0;top:44%;text-align:center;font-size:13px;letter-spacing:.3em;color:#ff6b5a;
+  text-shadow:0 0 10px #ff3b2a;opacity:0;pointer-events:none;transition:opacity .15s}
+#ecgw{position:relative;flex:1;min-height:54px;border-radius:10px;overflow:hidden;background:#020603;box-shadow:0 0 0 3px #0a0c09,0 0 0 5px #2c3029,inset 0 0 24px #000}
+#ecgw .lbl{position:absolute;left:10px;top:7px;font-size:9px;letter-spacing:.25em;color:var(--g2);pointer-events:none}
+#controls{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+button{font:inherit;font-size:10px;letter-spacing:.1em;color:#c9d1bd;padding:14px 4px;border:0;border-radius:10px;cursor:pointer;
+  background:linear-gradient(#3b4036,#25281f);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 3px 0 #0b0c0a,0 5px 8px rgba(0,0,0,.6)}
+button:active{transform:translateY(2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 1px 0 #0b0c0a}
+button.act{color:#06140a;background:linear-gradient(#9dffa9,#4fc85e);text-shadow:none}
+button small{display:block;font-size:9px;opacity:.65;margin-top:3px;letter-spacing:.1em}
+#boot{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:5;
+  background:rgba(2,6,3,.92);font-size:12px;letter-spacing:.2em;text-align:center;padding:20px;cursor:pointer}
+#boot h1{font-size:34px;letter-spacing:.4em;text-shadow:0 0 14px var(--g)}
+#boot .blink{animation:bl 1.1s steps(2) infinite}
+#boot p{color:var(--g2);font-size:10px;line-height:1.7;max-width:300px;letter-spacing:.12em}
+@keyframes bl{50%{opacity:0}}
+#toast{position:absolute;left:10px;right:10px;bottom:12px;padding:10px 12px;font-size:11px;line-height:1.5;letter-spacing:.06em;
+  color:#06140a;background:var(--g);border-radius:6px;box-shadow:0 0 14px rgba(134,255,148,.6);opacity:0;transform:translateY(8px);
+  transition:all .25s;pointer-events:none;z-index:6}
+#toast.show{opacity:1;transform:none}
+#toast.err{background:var(--amber);box-shadow:0 0 14px rgba(255,184,77,.6)}
+</style>
+</head>
+<body>
+<div id="app">
+ <div id="device">
+  <div class="plate"><span><b>PULSE</b> // HB-24 BIOSENSOR</span><span class="leds"><span class="led" id="ledPulse"></span><span class="led red" id="ledLink"></span></span></div>
+  <div id="screen">
+   <canvas id="cv"></canvas>
+   <div id="scan"></div><div id="vig"></div>
+   <div id="hud">
+    <div><div id="mode">SIM</div><div style="margin-top:6px">CONTACTS</div><div class="big" id="count">0</div></div>
+    <div class="r"><div id="rate">— BPM</div><div style="margin-top:6px">NEAREST</div><div class="big" id="near">--.-M</div></div>
+   </div>
+   <div id="warn">CONTACT CLOSE</div>
+   <div id="boot">
+    <h1>PULSE</h1>
+    <div class="blink">[ TAP TO POWER ON ]</div>
+    <p>SIM runs simulated contacts — tap the screen to drop or remove one.<br>SONAR uses this phone’s speaker + mic as ultrasonic sonar (~2 m).<br>LINK pairs a PULSE-PUCK radar over Bluetooth.</p>
+   </div>
+   <div id="toast"></div>
+  </div>
+  <div id="ecgw"><canvas id="ecg"></canvas><div class="lbl" id="elbl">BIO-SIGNAL</div></div>
+  <div id="controls">
+   <button id="bSim" class="act">SIM<small>TRAIN</small></button>
+   <button id="bSon">SONAR<small>PHONE</small></button>
+   <button id="bLink">LINK<small>PUCK</small></button>
+   <button id="bSnd">SOUND<small>ON</small></button>
+   <button id="bRng"><span>RANGE</span><small>6 M</small></button>
+  </div>
+ </div>
+</div>
+<script>
+(()=>{
+'use strict';
+// ---------- config ----------
+const NUS_SVC='6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX ='6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const FAN=Math.PI/3;            // ±60° field of view (matches LD2450)
+const RANGES=[3,4,6,8];
+const S={mode:'sim',sound:true,range:6,simN:3,phase:0,period:1.8,lastT:0,booted:false};
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');
+let W=0,H=0,DPR=1,ox=0,oy=0,ppm=0,grid=null;
+const ecg=$('ecg'),ectx=ecg.getContext('2d');let EW=0,EH=0,ebuf=new Float32Array(1),ecur=0,lastPulse=-1e9,pulseAmp=0;
+let sims=[],blips=[],specks=[],live={t:0,targets:[]},bleDev=null,pktCount=0,pktRate=0;
+
+try{const s=JSON.parse(localStorage.getItem('pulse')||'{}');if(s.range)S.range=s.range;if(s.sound===false)S.sound=false;}catch(e){}
+const save=()=>{try{localStorage.setItem('pulse',JSON.stringify({range:S.range,sound:S.sound}))}catch(e){}};
+
+// ---------- layout ----------
+function resize(){
+  const r=$('screen').getBoundingClientRect();
+  DPR=Math.min(window.devicePixelRatio||1,2.5);W=r.width;H=r.height;
+  cv.width=Math.round(W*DPR);cv.height=Math.round(H*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);
+  ox=W/2;oy=H-14;
+  const maxR=Math.min(oy-62,(W/2-6)/Math.sin(FAN)*1.3); // slight edge overscan, like the in-game screen
+  ppm=maxR/S.range;
+  buildGrid();
+  const er=$('ecgw').getBoundingClientRect();EW=Math.max(1,er.width);EH=Math.max(1,er.height);
+  ecg.width=Math.round(EW*DPR);ecg.height=Math.round(EH*DPR);ectx.setTransform(DPR,0,0,DPR,0,0);
+  ebuf=new Float32Array(Math.ceil(EW));ecur=0;
+}
+function buildGrid(){
+  grid=document.createElement('canvas');grid.width=cv.width;grid.height=cv.height;
+  const g=grid.getContext('2d');g.setTransform(DPR,0,0,DPR,0,0);
+  const R=S.range*ppm,a0=-Math.PI/2-FAN,a1=-Math.PI/2+FAN;
+  // fan fill
+  g.beginPath();g.moveTo(ox,oy);g.arc(ox,oy,R,a0,a1);g.closePath();
+  const fg=g.createRadialGradient(ox,oy,0,ox,oy,R);fg.addColorStop(0,'rgba(60,180,80,.10)');fg.addColorStop(1,'rgba(60,180,80,.03)');
+  g.fillStyle=fg;g.fill();
+  // fine grid
+  g.save();g.clip();g.strokeStyle='rgba(134,255,148,.05)';g.lineWidth=1;
+  for(let x=ox%18;x<W;x+=18){g.beginPath();g.moveTo(x,0);g.lineTo(x,H);g.stroke()}
+  for(let y=oy%18;y>0;y-=18){g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke()}
+  g.restore();
+  // range arcs
+  g.font='10px ui-monospace,Menlo,monospace';g.textAlign='left';
+  const step=S.range<=2?.5:1;
+  for(let m=step;m<=S.range+1e-6;m+=step){
+    const major=step<1?Math.abs(m-Math.round(m))<1e-6:(m%2===0||m===S.range);
+    g.strokeStyle=major?'rgba(134,255,148,.32)':'rgba(134,255,148,.13)';g.lineWidth=major?1.2:1;
+    g.setLineDash(major?[]:[3,5]);g.beginPath();g.arc(ox,oy,m*ppm,a0,a1);g.stroke();
+    if(major){g.fillStyle='rgba(134,255,148,.55)';g.fillText(m+'M',ox+4,oy-m*ppm+12)}
+  }
+  g.setLineDash([]);
+  // spokes
+  for(const d of [-60,-30,0,30,60]){
+    const a=-Math.PI/2+d*Math.PI/180;g.strokeStyle=d===0?'rgba(134,255,148,.22)':'rgba(134,255,148,.14)';
+    g.beginPath();g.moveTo(ox,oy);g.lineTo(ox+Math.cos(a)*R,oy+Math.sin(a)*R);g.stroke();
+  }
+  // emitter
+  g.fillStyle='rgba(134,255,148,.9)';g.beginPath();g.arc(ox,oy,3,0,Math.PI*2);g.fill();
+}
+
+// ---------- audio ----------
+let ac=null,master=null;
+function initAudio(){
+  try{const AC=window.AudioContext||window.webkitAudioContext;try{ac=new AC({sampleRate:48000})}catch(_){ac=new AC()}master=ac.createGain();master.gain.value=.9;
+    const comp=ac.createDynamicsCompressor();master.connect(comp).connect(ac.destination);}catch(e){ac=null}
+}
+function thump(t,gain){
+  const o=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain();
+  o.type='sine';o.frequency.setValueAtTime(150,t);o.frequency.exponentialRampToValueAtTime(48,t+.16);
+  o2.type='triangle';o2.frequency.setValueAtTime(300,t);o2.frequency.exponentialRampToValueAtTime(96,t+.12); // harmonic so phone speakers can hear it
+  const g2=ac.createGain();g2.gain.value=.25;
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(gain,t+.008);g.gain.exponentialRampToValueAtTime(.0001,t+.24);
+  o.connect(g);o2.connect(g2).connect(g);g.connect(master);o.start(t);o2.start(t);o.stop(t+.26);o2.stop(t+.26);
+}
+function heartbeat(intensity){
+  if(!ac||!S.sound)return;const t=ac.currentTime+.01;
+  thump(t,.35+.55*intensity);thump(t+.17,.22+.4*intensity);
+}
+function ping(closeness){
+  if(!ac||!S.sound)return;const t=ac.currentTime+.005,o=ac.createOscillator(),g=ac.createGain();
+  o.type='sine';o.frequency.value=900+900*closeness;
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.07,t+.005);g.gain.exponentialRampToValueAtTime(.0001,t+.09);
+  o.connect(g).connect(master);o.start(t);o.stop(t+.1);
+}
+const buzz=p=>{try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}};
+
+// ---------- contacts ----------
+function inFan(x,y){const r=Math.hypot(x,y),a=Math.atan2(x,y);return y>0&&r<=S.range&&Math.abs(a)<=FAN}
+function randPoint(){const r=.8+Math.random()*(S.range-1.2),a=(Math.random()*2-1)*FAN*.9;return{x:Math.sin(a)*r,y:Math.cos(a)*r}}
+function newSim(p,still){const q=p||randPoint();return{x:q.x,y:q.y,wp:randPoint(),spd:.4+Math.random()*.9,wait:still?Infinity:Math.random()*2,still:!!still}}
+function resetSims(){sims=[];for(let i=0;i<S.simN;i++)sims.push(newSim())}
+function stepSims(dt){
+  for(const s of sims){
+    if(s.still)continue;
+    if(s.wait>0){s.wait-=dt;continue}
+    const dx=s.wp.x-s.x,dy=s.wp.y-s.y,d=Math.hypot(dx,dy);
+    if(d<.15){s.wp=randPoint();s.wait=Math.random()<.4?1+Math.random()*3:0;s.spd=.4+Math.random()*.9;continue}
+    s.x+=dx/d*s.spd*dt;s.y+=dy/d*s.spd*dt;
+  }
+}
+function contacts(){
+  if(S.mode==='sonar'){
+    return SN.hit&&performance.now()-SN.hit.t<700?[{x:0,y:SN.hit.d,arc:true}]:[];
+  }
+  if(S.mode==='live'){
+    if(performance.now()-live.t>1500)return[];
+    return live.targets.filter(t=>inFan(t.x,t.y));
+  }
+  return sims;
+}
+
+// ---------- pulse / render ----------
+function onPulseStart(cs){
+  const led=$('ledPulse');led.classList.add('on');setTimeout(()=>led.classList.remove('on'),120);
+  const n=nearest(cs),close=n==null?0:1-Math.min(n/S.range,1);
+  heartbeat(cs.length?close:0);
+  lastPulse=performance.now();pulseAmp=cs.length?.4+.6*close:.12;
+  if(cs.length)buzz(n<1.5?[40,90,30]:[18]);
+  // static specks for texture
+  specks=[];for(let i=0;i<10;i++){const p=randPoint();specks.push({x:p.x,y:p.y,a:.08+Math.random()*.15})}
+}
+function nearest(cs){let m=null;for(const c of cs){const d=Math.hypot(c.x,c.y);if(m==null||d<m)m=d}return m}
+function toScr(x,y){return[ox+x*ppm,oy-y*ppm]}
+
+function frame(t){
+  const dt=Math.min(.05,(t-(S.lastT||t))/1000);S.lastT=t;
+  if(S.mode==='sim')stepSims(dt);
+  const cs=contacts(),n=nearest(cs);
+  // pulse rate speeds up as contacts close in
+  const target=n==null?1.9:1.9*(.5+.5*Math.min(n/S.range,1));
+  S.period+=(target-S.period)*Math.min(1,dt*1.5);
+  const prev=S.phase;S.phase+=dt/S.period;
+  if(S.phase>=1){S.phase-=1;onPulseStart(cs)}
+  const R=S.range*ppm,travel=.8;
+  const f0=Math.min(prev<S.phase?prev/travel:0,1)*R,f1=Math.min(S.phase/travel,1)*R;
+  // ping contacts as the wavefront passes them
+  for(const c of cs){const d=Math.hypot(c.x,c.y)*ppm;if(d>f0&&d<=f1){blips.push({x:c.x,y:c.y,born:t,arc:!!c.arc});ping(1-Math.min(Math.hypot(c.x,c.y)/S.range,1))}}
+
+  ctx.clearRect(0,0,W,H);ctx.drawImage(grid,0,0,W,H);
+  const a0=-Math.PI/2-FAN,a1=-Math.PI/2+FAN;
+  // wavefront
+  if(S.phase<travel){
+    ctx.save();ctx.beginPath();ctx.moveTo(ox,oy);ctx.arc(ox,oy,R,a0,a1);ctx.closePath();ctx.clip();
+    const band=Math.max(30,R*.22),inner=Math.max(0,f1-band),fade=1-Math.pow(S.phase/travel,3);
+    const gr=ctx.createRadialGradient(ox,oy,inner,ox,oy,Math.max(f1,1));
+    gr.addColorStop(0,'rgba(134,255,148,0)');gr.addColorStop(.85,`rgba(134,255,148,${.18*fade})`);gr.addColorStop(1,`rgba(190,255,200,${.55*fade})`);
+    ctx.fillStyle=gr;ctx.beginPath();ctx.moveTo(ox,oy);ctx.arc(ox,oy,f1,a0,a1);ctx.closePath();ctx.fill();
+    ctx.strokeStyle=`rgba(200,255,210,${.8*fade})`;ctx.lineWidth=2;ctx.shadowColor='#86ff94';ctx.shadowBlur=12;
+    ctx.beginPath();ctx.arc(ox,oy,f1,a0,a1);ctx.stroke();ctx.restore();
+  }
+  // specks
+  for(const s of specks){const[x,y]=toScr(s.x,s.y);ctx.fillStyle=`rgba(134,255,148,${s.a*(1-S.phase)})`;ctx.fillRect(x,y,1.5,1.5)}
+  // blips (persist and fade like phosphor)
+  const life=S.period*1000*1.15;blips=blips.filter(b=>t-b.born<life);
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  for(const b of blips){
+    const k=1-(t-b.born)/life,[x,y]=toScr(b.x,b.y),age=(t-b.born)/1000;
+    if(b.arc){ // sonar knows distance but not direction: draw a range arc
+      const r=Math.hypot(b.x,b.y)*ppm;ctx.shadowColor='#86ff94';ctx.shadowBlur=24*k;
+      ctx.strokeStyle=`rgba(170,255,180,${.85*k})`;ctx.lineWidth=5+7*k;ctx.lineCap='round';
+      ctx.beginPath();ctx.arc(ox,oy,r,-Math.PI/2-FAN*.8,-Math.PI/2+FAN*.8);ctx.stroke();continue;
+    }
+    ctx.shadowColor='#86ff94';ctx.shadowBlur=22*k;
+    const rr=7+5*k;const g=ctx.createRadialGradient(x,y,0,x,y,rr*2.2);
+    g.addColorStop(0,`rgba(235,255,238,${.95*k})`);g.addColorStop(.3,`rgba(134,255,148,${.75*k})`);g.addColorStop(1,'rgba(134,255,148,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,rr*2.2,0,Math.PI*2);ctx.fill();
+    if(age<.35){ctx.strokeStyle=`rgba(134,255,148,${(1-age/.35)*.8})`;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,rr+age*60,0,Math.PI*2);ctx.stroke()}
+  }
+  ctx.restore();
+  if(S.mode==='sonar')drawSonarStrip();else drawEcg(t,dt);
+  // HUD
+  $('count').textContent=cs.length;
+  $('near').textContent=n==null?'--.-M':n.toFixed(1)+'M';
+  $('rate').textContent=S.mode==='live'?(pktRate+' PKT/S'):S.mode==='sonar'?('SNR '+(SN.snr||0).toFixed(1)):(Math.round(60/S.period)+' BPM');
+  $('warn').style.opacity=(n!=null&&n<S.range*.2)?(Math.sin(t/90)>0?1:.25):0;
+  requestAnimationFrame(frame);
+}
+
+const gs=(x,m,w)=>Math.exp(-((x-m)*(x-m))/(2*w*w));
+function ecgVal(tau){return .1*gs(tau,.03,.02)-.12*gs(tau,.11,.008)+gs(tau,.135,.011)-.28*gs(tau,.16,.01)+.25*gs(tau,.33,.04)}
+function drawEcg(t,dt){
+  const n=ebuf.length,steps=Math.max(1,Math.round(95*dt));
+  for(let i=0;i<steps;i++){
+    const tau=(t-lastPulse)/1000-(steps-1-i)/95;
+    ebuf[ecur]=(tau>=0&&tau<.6?ecgVal(tau)*pulseAmp:0)+(Math.random()-.5)*.025;ecur=(ecur+1)%n;
+  }
+  ectx.clearRect(0,0,EW,EH);
+  ectx.strokeStyle='rgba(134,255,148,.07)';ectx.lineWidth=1;
+  for(let x=0;x<EW;x+=12){ectx.beginPath();ectx.moveTo(x,0);ectx.lineTo(x,EH);ectx.stroke()}
+  const mid=EH*.62,amp=Math.min(EH*.45,70);
+  ectx.save();ectx.strokeStyle='#86ff94';ectx.lineWidth=1.6;ectx.shadowColor='#86ff94';ectx.shadowBlur=8;ectx.beginPath();
+  let pen=false;
+  for(let x=0;x<n;x++){
+    const gap=(x-ecur+n)%n;if(gap<14){pen=false;continue}
+    const y=mid-ebuf[x]*amp;if(!pen){ectx.moveTo(x,y);pen=true}else ectx.lineTo(x,y);
+  }
+  ectx.stroke();ectx.restore();
+  ectx.fillStyle='#d8ffdd';ectx.beginPath();ectx.arc((ecur-1+n)%n,mid-ebuf[(ecur-1+n)%n]*amp,2.5,0,Math.PI*2);ectx.fill();
+}
+
+// ---------- sonar: phone speaker + mic as ultrasonic FMCW sonar ----------
+// Loops an inaudible 18–21.5 kHz chirp out of the speaker, cross-correlates the mic signal
+// with it, locks onto the direct speaker→mic path, subtracts the static room, and reports
+// the distance of whatever is moving. Range only (no direction). Doesn't pass through walls.
+const SN={N:2048,f0:18000,f1:21500,on:false,sens:1,thrs:[6,4,2.7],prof:new Float32Array(600),bg:null,L0:-1,frames:0,hit:null,snr:0,noise:0,scale:1e-3,prevRange:6};
+SN.thr=()=>SN.thrs[SN.sens];
+function fft(re,im,inv){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){let b=n>>1;for(;j&b;b>>=1)j^=b;j^=b;if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t}}
+  for(let len=2;len<=n;len<<=1){
+    const a=(inv?2:-2)*Math.PI/len,wr=Math.cos(a),wi=Math.sin(a),h=len>>1;
+    for(let i=0;i<n;i+=len){let cr=1,ci=0;
+      for(let k=0;k<h;k++){const p=i+k,q=p+h,tr=re[q]*cr-im[q]*ci,ti=re[q]*ci+im[q]*cr;
+        re[q]=re[p]-tr;im[q]=im[p]-ti;re[p]+=tr;im[p]+=ti;const nr=cr*wr-ci*wi;ci=cr*wi+ci*wr;cr=nr}}
+  }
+  if(inv)for(let i=0;i<n;i++){re[i]/=n;im[i]/=n}
+}
+function makeChirp(fs){
+  const N=SN.N,T=N/fs,x=new Float32Array(N),tp=96;
+  for(let i=0;i<N;i++){const t=i/fs;let w=1;
+    if(i<tp)w=.5-.5*Math.cos(Math.PI*i/tp);else if(i>N-tp)w=.5-.5*Math.cos(Math.PI*(N-i)/tp);
+    x[i]=w*Math.sin(2*Math.PI*(SN.f0*t+(SN.f1-SN.f0)*t*t/(2*T)))}
+  return x;
+}
+async function sonarStart(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){toast('No microphone access here. Open your self-hosted copy in Chrome.',1);return false}
+  if(!ac)initAudio();if(!ac){toast('Audio unavailable',1);return false}
+  try{await ac.resume()}catch(_){}
+  const fs=ac.sampleRate;
+  if(fs/2<SN.f1+800){toast('Audio rate '+fs+' Hz is too low for ultrasound',1);return false}
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}})}
+  catch(e){toast(e&&(e.name==='NotAllowedError'||e.name==='SecurityError')?'Mic blocked. In this preview that’s expected — open your self-hosted copy in Chrome and allow the microphone.':'Mic error: '+(e&&e.message||e),1);return false}
+  const chirp=makeChirp(fs),re=Float64Array.from(chirp),im=new Float64Array(SN.N);fft(re,im,false);SN.refRe=re;SN.refIm=im;
+  const buf=ac.createBuffer(1,SN.N,fs);buf.copyToChannel(chirp,0);
+  const src=ac.createBufferSource();src.buffer=buf;src.loop=true;
+  const g=ac.createGain();g.gain.value=.8;src.connect(g).connect(ac.destination);src.start();
+  const mic=ac.createMediaStreamSource(stream),sp=ac.createScriptProcessor(SN.N,1,1),z=ac.createGain();z.gain.value=0;
+  mic.connect(sp);sp.connect(z).connect(ac.destination);
+  sp.onaudioprocess=e=>sonarFrame(e.inputBuffer.getChannelData(0),fs);
+  Object.assign(SN,{on:true,src,g,mic,sp,z,stream,bg:null,L0:-1,frames:0,hit:null,snr:0,prof:new Float32Array(600)});
+  return true;
+}
+function sonarStop(){
+  if(!SN.on)return;
+  try{SN.src.stop()}catch(_){}
+  try{SN.sp.onaudioprocess=null;SN.mic.disconnect();SN.sp.disconnect();SN.g.disconnect();SN.z.disconnect()}catch(_){}
+  try{SN.stream.getTracks().forEach(t=>t.stop())}catch(_){}
+  SN.on=false;SN.hit=null;
+}
+function sonarFrame(x,fs){
+  const N=SN.N,re=new Float64Array(N),im=new Float64Array(N);
+  for(let i=0;i<N;i++)re[i]=x[i];
+  fft(re,im,false);
+  for(let i=0;i<N;i++){const a=re[i],b=im[i],c=SN.refRe[i],d=-SN.refIm[i];re[i]=a*c-b*d;im[i]=a*d+b*c}
+  for(let i=1;i<N/2;i++){re[i]*=2;im[i]*=2}for(let i=N/2+1;i<N;i++){re[i]=0;im[i]=0} // analytic -> complex correlation
+  fft(re,im,true);
+  // direct speaker->mic path = strongest peak; everything else is measured relative to it
+  let L=0,m=0;for(let k=0;k<N;k++){const v=re[k]*re[k]+im[k]*im[k];if(v>m){m=v;L=k}}
+  const drift=Math.abs(((L-SN.L0+N+N/2)%N)-N/2);
+  if(SN.L0<0||drift>3){SN.L0=L;SN.bg=null;SN.frames=0}
+  const K=SN.prof.length,amp=Math.sqrt(m)||1;
+  if(!SN.bg)SN.bg={r:new Float64Array(K),i:new Float64Array(K)};
+  const a=SN.frames<20?.3:.05; // fast calibration, then slow static-room tracking
+  for(let k=0;k<K;k++){
+    const j=(SN.L0+k)%N,cr=re[j]/amp,ci=im[j]/amp,dr=cr-SN.bg.r[k],di=ci-SN.bg.i[k];
+    SN.bg.r[k]+=a*dr;SN.bg.i[k]+=a*di;SN.prof[k]=SN.prof[k]*.6+Math.hypot(dr,di)*.4;
+  }
+  SN.frames++;
+  const mpb=343/(2*fs),kmin=Math.round(.15/mpb),kmax=Math.min(K-1,Math.round(1.9/mpb));
+  let best=0,bk=-1;const arr=[];
+  for(let k=kmin;k<=kmax;k++){const v=SN.prof[k];arr.push(v);if(v>best){best=v;bk=k}}
+  arr.sort((p,q)=>p-q);const med=arr[arr.length>>1]||1e-9;
+  SN.noise=med;SN.snr=best/med;
+  if(SN.frames>25&&SN.snr>SN.thr()&&best>.0015){
+    const d=bk*mpb;SN.hit={d:SN.hit&&performance.now()-SN.hit.t<500?SN.hit.d*.6+d*.4:d,t:performance.now()};
+  }
+}
+function drawSonarStrip(){
+  ectx.clearRect(0,0,EW,EH);
+  const fs=ac?ac.sampleRate:48000,mpb=343/(2*fs),kmax=Math.min(SN.prof.length-1,Math.round(S.range/mpb));
+  const thr=SN.noise*SN.thr();let mx=thr*1.4;for(let k=0;k<=kmax;k++)if(SN.prof[k]>mx)mx=SN.prof[k];
+  SN.scale=Math.max(mx,SN.scale*.97,1e-6);
+  const base=EH-16,hgt=EH-34,X=k=>k/kmax*EW,Y=v=>base-Math.min(1,v/SN.scale)*hgt;
+  ectx.font='9px ui-monospace,Menlo,monospace';ectx.fillStyle='rgba(134,255,148,.45)';ectx.strokeStyle='rgba(134,255,148,.1)';
+  for(let m=.5;m<S.range;m+=.5){const x=X(m/mpb);ectx.beginPath();ectx.moveTo(x,0);ectx.lineTo(x,base);ectx.stroke();ectx.fillText(m+'M',x+2,EH-4)}
+  if(SN.frames>25){ectx.setLineDash([4,4]);ectx.strokeStyle='rgba(255,184,77,.6)';ectx.beginPath();ectx.moveTo(0,Y(thr));ectx.lineTo(EW,Y(thr));ectx.stroke();ectx.setLineDash([])}
+  ectx.save();ectx.strokeStyle='#86ff94';ectx.lineWidth=1.5;ectx.shadowColor='#86ff94';ectx.shadowBlur=6;ectx.beginPath();
+  for(let k=0;k<=kmax;k++){const x=X(k),y=Y(SN.prof[k]);k?ectx.lineTo(x,y):ectx.moveTo(x,y)}
+  ectx.stroke();ectx.restore();
+  ectx.fillStyle='rgba(134,255,148,.6)';
+  ectx.fillText(!SN.on?'SONAR OFF':SN.frames<=25?'CALIBRATING — HOLD STILL':'ECHO / DISTANCE',EW-150,12);
+}
+
+// ---------- bluetooth (PULSE-PUCK) ----------
+function parsePacket(dv){
+  const out=[];
+  for(let i=0;i+6<=dv.byteLength;i+=6){
+    const x=dv.getInt16(i,true),y=dv.getInt16(i+2,true),v=dv.getInt16(i+4,true);
+    if(x===0&&y===0)continue;out.push({x:x/1000,y:y/1000,v});
+  }
+  live={t:performance.now(),targets:out};pktCount++;
+}
+setInterval(()=>{pktRate=pktCount;pktCount=0},1000);
+async function link(){
+  if(bleDev&&bleDev.gatt.connected){bleDev.gatt.disconnect();return}
+  if(S.mode==='sonar')setMode('sim');
+  if(!navigator.bluetooth){toast('Bluetooth isn’t available here. Open this page from your own HTTPS host in Chrome on Android (or the Bluefy browser on iPhone).',1);return}
+  try{
+    const dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'PULSE'}],optionalServices:[NUS_SVC]});
+    toast('Connecting to '+(dev.name||'puck')+'…');
+    dev.addEventListener('gattserverdisconnected',()=>{if(S.mode==='live')setMode('sim');$('ledLink').classList.remove('on');toast('Puck disconnected — back to SIM',1)});
+    const srv=await dev.gatt.connect(),svc=await srv.getPrimaryService(NUS_SVC),ch=await svc.getCharacteristic(NUS_TX);
+    ch.addEventListener('characteristicvaluechanged',e=>parsePacket(e.target.value));
+    await ch.startNotifications();bleDev=dev;setMode('live');$('ledLink').classList.add('on');toast('Linked. Point the puck’s face at the area to scan.');
+  }catch(e){
+    if(e&&e.name==='NotFoundError')return; // user cancelled the picker
+    toast(e&&e.name==='SecurityError'?'Bluetooth is blocked inside this preview. Host the file yourself (e.g. GitHub Pages) and open it in Chrome.':'Link failed: '+(e&&e.message||e),1);
+  }
+}
+
+// ---------- UI ----------
+function setMode(m){
+  const prev=S.mode;
+  if(prev==='sonar'&&m!=='sonar'){sonarStop();S.range=SN.prevRange;resize()}
+  if(m==='sonar'&&prev!=='sonar'){SN.prevRange=S.range;S.range=2;resize()}
+  S.mode=m;blips=[];
+  $('mode').textContent=m.toUpperCase();$('mode').classList.toggle('live',m!=='sim');
+  $('elbl').textContent=m==='sonar'?'SONAR ECHO':'BIO-SIGNAL';
+  $('bSim').classList.toggle('act',m==='sim');$('bLink').classList.toggle('act',m==='live');$('bSon').classList.toggle('act',m==='sonar');
+  syncButtons();
+  $('bLink').querySelector('small').textContent=m==='live'?'UNLINK':'PUCK';
+}
+let tt=null;
+function toast(msg,err){const el=$('toast');el.textContent=msg;el.classList.toggle('err',!!err);el.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>el.classList.remove('show'),4200)}
+function syncButtons(){
+  $('bSnd').querySelector('small').textContent=S.sound?'ON':'OFF';$('bSnd').classList.toggle('act',S.sound);
+  const son=S.mode==='sonar';
+  $('bRng').querySelector('span').textContent=son?'SENS':'RANGE';
+  $('bRng').querySelector('small').textContent=son?['LOW','MED','HIGH'][SN.sens]:S.range+' M';
+}
+$('boot').addEventListener('click',async e=>{
+  e.stopPropagation();initAudio();if(ac&&ac.state==='suspended')try{await ac.resume()}catch(_){}
+  try{navigator.wakeLock&&await navigator.wakeLock.request('screen')}catch(_){}
+  $('boot').style.display='none';S.booted=true;heartbeat(.6);
+});
+$('bSim').onclick=()=>{if(bleDev&&bleDev.gatt.connected)bleDev.gatt.disconnect();if(S.mode!=='sim'){setMode('sim');return}S.simN=S.simN%4+1;resetSims();toast('SIM: '+S.simN+' moving contact'+(S.simN>1?'s':'')+'. Tap the screen to drop a stationary one.')};
+$('bLink').onclick=link;
+let sonBusy=false;
+$('bSon').onclick=async()=>{
+  if(S.mode==='sonar'){setMode('sim');return}
+  if(sonBusy)return;sonBusy=true;
+  if(bleDev&&bleDev.gatt.connected)bleDev.gatt.disconnect();
+  if(await sonarStart()){setMode('sonar');toast('SONAR on. Set the phone down facing the area, hands off, 2 s to calibrate. Range ~2 m, line of sight only.')}
+  sonBusy=false;
+};
+$('bSnd').onclick=()=>{S.sound=!S.sound;if(S.sound&&!ac)initAudio();syncButtons();save()};
+$('bRng').onclick=()=>{if(S.mode==='sonar'){SN.sens=(SN.sens+1)%3;syncButtons();return}S.range=RANGES[(RANGES.indexOf(S.range)+1)%RANGES.length];resize();resetSims();syncButtons();save()};
+cv.addEventListener('pointerdown',e=>{
+  if(!S.booted||S.mode!=='sim')return;
+  const r=cv.getBoundingClientRect(),x=(e.clientX-r.left-ox)/ppm,y=(oy-(e.clientY-r.top))/ppm;
+  if(!inFan(x,y))return;
+  const i=sims.findIndex(s=>Math.hypot(s.x-x,s.y-y)<.6);
+  if(i>=0)sims.splice(i,1);else sims.push(newSim({x,y},true));
+});
+addEventListener('resize',resize);
+resize();resetSims();syncButtons();setMode('sim');requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
